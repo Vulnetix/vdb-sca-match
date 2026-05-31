@@ -3,6 +3,7 @@ package match
 import (
 	"context"
 	"log"
+	"strings"
 )
 
 // Match represents one CVE matched against a dependency.
@@ -19,12 +20,31 @@ type Match struct {
 func MatchDependency(ctx context.Context, q Querier, dep Dependency) ([]Match, error) {
 	seen := map[string]Match{}
 
+	// add merges a match into the dedup map keyed by CveID. A CVE reached by
+	// several methods keeps every method (folded into Method for the consumer's
+	// Triage.analysisDetail) and the first non-empty VulnerableRange — which,
+	// because version-range runs first, is the most informative range.
+	add := func(mm Match) {
+		if ex, ok := seen[mm.CveID]; ok {
+			ex.Method = appendMethod(ex.Method, mm.Method)
+			if ex.VulnerableRange == "" {
+				ex.VulnerableRange = mm.VulnerableRange
+			}
+			if ex.Source == "" {
+				ex.Source = mm.Source
+			}
+			seen[mm.CveID] = ex
+			return
+		}
+		seen[mm.CveID] = mm
+	}
+
 	// 1. version-range matching (primary)
 	if m, err := matchVersionRange(ctx, q, dep); err != nil {
 		log.Printf("[match] version-range error for %s: %v", dep.Key, err)
 	} else {
 		for _, mm := range m {
-			seen[mm.CveID] = mm
+			add(mm)
 		}
 	}
 
@@ -33,7 +53,7 @@ func MatchDependency(ctx context.Context, q Querier, dep Dependency) ([]Match, e
 		log.Printf("[match] purl error for %s: %v", dep.Key, err)
 	} else {
 		for _, mm := range m {
-			seen[mm.CveID] = mm
+			add(mm)
 		}
 	}
 
@@ -43,7 +63,7 @@ func MatchDependency(ctx context.Context, q Querier, dep Dependency) ([]Match, e
 			log.Printf("[match] cpe error for %s: %v", dep.Key, err)
 		} else {
 			for _, mm := range m {
-				seen[mm.CveID] = mm
+				add(mm)
 			}
 		}
 	}
@@ -73,9 +93,19 @@ func MatchDependency(ctx context.Context, q Querier, dep Dependency) ([]Match, e
 	return out, nil
 }
 
+// appendMethod adds method to a comma-separated method list, skipping it when
+// already present so repeated hits (e.g. two version-range rows) don't duplicate.
 func appendMethod(existing, method string) string {
 	if existing == "" {
 		return method
+	}
+	if method == "" {
+		return existing
+	}
+	for _, m := range strings.Split(existing, ",") {
+		if m == method {
+			return existing
+		}
 	}
 	return existing + "," + method
 }

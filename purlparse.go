@@ -14,12 +14,19 @@ func ParsePurl(purl string) (ecosystem, fullName, version string) {
 	if s == purl || s == "" {
 		return "", "", ""
 	}
+	// Drop subpath (#...) then qualifiers (?...) before splitting the version:
+	// per the PURL spec both trail the version, so a value like
+	// "4.2?extension=tar.gz" must not leak into the version (it would corrupt
+	// the downstream version comparison this engine depends on).
+	if h := strings.IndexByte(s, '#'); h >= 0 {
+		s = s[:h]
+	}
+	if q := strings.IndexByte(s, '?'); q >= 0 {
+		s = s[:q]
+	}
 	if at := strings.LastIndex(s, "@"); at >= 0 {
 		version = s[at+1:]
 		s = s[:at]
-	}
-	if q := strings.IndexAny(s, "?#"); q >= 0 {
-		s = s[:q]
 	}
 	ecoPart, namePart, ok := strings.Cut(s, "/")
 	if !ok {

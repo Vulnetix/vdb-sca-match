@@ -20,13 +20,18 @@ func matchCPE(ctx context.Context, q Querier, dep Dependency) ([]Match, error) {
 		return nil, nil
 	}
 
+	// cpes / cpesJSON are stored as JSON-array text (e.g. ["cpe:2.3:a:..."]), so
+	// the prefix must be wrapped in leading+trailing wildcards — an anchored
+	// "cpe:...%" never matches a value that starts with '['.
+	pattern := "%" + prefix + "%"
+
 	// Query CVEAffected.cpes
 	rows, err := q.Query(ctx, `
 		SELECT DISTINCT "cveId"
 		FROM "CVEAffected"
 		WHERE cpes ILIKE $1
 		LIMIT 200`,
-		prefix+"%",
+		pattern,
 	)
 	if err != nil {
 		return nil, err
@@ -57,7 +62,7 @@ func matchCPE(ctx context.Context, q Querier, dep Dependency) ([]Match, error) {
 		FROM "CVEMetadata"
 		WHERE "cpesJSON" ILIKE $1
 		LIMIT 200`,
-		prefix+"%",
+		pattern,
 	)
 	if err != nil {
 		return matches, nil // return what we have

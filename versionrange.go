@@ -15,9 +15,12 @@ func matchVersionRange(ctx context.Context, q Querier, dep Dependency) ([]Match,
 		return nil, nil
 	}
 
+	// cveId/source live on CVEAffected (ca); the version bounds live on
+	// CVEAffectedVersion (cav). The version column is named "version" (not
+	// "versionValue"), and CVEAffectedVersion has no cveId of its own.
 	rows, err := q.Query(ctx, `
-		SELECT cav."cveId", cav.status, cav."versionType",
-		       cav."versionValue", cav."lessThan", cav."lessThanOrEqual",
+		SELECT ca."cveId", ca.source, cav.status, cav."versionType",
+		       cav.version, cav."lessThan", cav."lessThanOrEqual",
 		       cav."isValidVersion"
 		FROM "CVEAffected" ca
 		JOIN "CVEAffectedVersion" cav ON ca.uuid = cav."affectedId"
@@ -33,10 +36,10 @@ func matchVersionRange(ctx context.Context, q Querier, dep Dependency) ([]Match,
 
 	var matches []Match
 	for rows.Next() {
-		var cveID, status, versionType string
-		var versionValue, lessThan, lessThanOrEqual *string
+		var cveID, source, status string
+		var versionType, versionValue, lessThan, lessThanOrEqual *string
 		var isValidVersion *bool
-		if err := rows.Scan(&cveID, &status, &versionType, &versionValue, &lessThan, &lessThanOrEqual, &isValidVersion); err != nil {
+		if err := rows.Scan(&cveID, &source, &status, &versionType, &versionValue, &lessThan, &lessThanOrEqual, &isValidVersion); err != nil {
 			continue
 		}
 
@@ -45,19 +48,25 @@ func matchVersionRange(ctx context.Context, q Querier, dep Dependency) ([]Match,
 			continue
 		}
 
-		vt := versionType
+		vt := ""
+		if versionType != nil {
+			vt = *versionType
+		}
 		if vt == "" {
 			vt = dep.Ecosystem
 		}
 
 		matched, method := decideVersionRange(dep.Version, status, vt, versionValue, lessThan, lessThanOrEqual)
 		if matched {
-			rangeStr := buildRangeString(versionValue, lessThan, lessThanOrEqual)
+			src := source
+			if src == "" {
+				src = "CVEAffected"
+			}
 			matches = append(matches, Match{
 				CveID:           cveID,
-				Source:          "CVEAffected",
+				Source:          src,
 				Method:          method,
-				VulnerableRange: rangeStr,
+				VulnerableRange: buildRangeString(versionValue, lessThan, lessThanOrEqual),
 			})
 		}
 	}
@@ -73,7 +82,7 @@ func decideVersionRange(version, status, versionType string, versionValue, lessT
 	case "affected":
 		// Exact version match
 		if versionValue != nil && *versionValue != "" {
-			cmp, ok := ver.Compare("", versionType, version,*versionValue)
+			cmp, ok := ver.Compare("", versionType, version, *versionValue)
 			if ok && cmp == 0 {
 				return true, "version-range:exact"
 			}
@@ -84,7 +93,7 @@ func decideVersionRange(version, status, versionType string, versionValue, lessT
 		}
 		// Range check: version < lessThan
 		if lessThan != nil && *lessThan != "" {
-			cmp, ok := ver.Compare("", versionType, version,*lessThan)
+			cmp, ok := ver.Compare("", versionType, version, *lessThan)
 			if ok && cmp < 0 {
 				return true, "version-range:lessThan"
 			}
@@ -94,7 +103,7 @@ func decideVersionRange(version, status, versionType string, versionValue, lessT
 		}
 		// Range check: version <= lessThanOrEqual
 		if lessThanOrEqual != nil && *lessThanOrEqual != "" {
-			cmp, ok := ver.Compare("", versionType, version,*lessThanOrEqual)
+			cmp, ok := ver.Compare("", versionType, version, *lessThanOrEqual)
 			if ok && cmp <= 0 {
 				return true, "version-range:lessThanOrEqual"
 			}
