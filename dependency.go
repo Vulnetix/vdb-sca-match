@@ -7,5 +7,6 @@ type Dependency struct {
 	Ecosystem string
 	Purl      string
 	Cpe       string
+	License   string
 	Key       string // unique identifier (e.g. cdxId:name:version or name:version)
 }
